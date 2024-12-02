@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -19,7 +20,9 @@ func generateRandomIP() string {
 }
 
 // checkAPIAvailability checks common API endpoints on the generated IP
-func checkAPIAvailability(ip string) {
+func checkAPIAvailability(ip string, wg *sync.WaitGroup, resultChannel chan<- string) {
+	defer wg.Done()
+
 	// List of common API endpoints to check
 	endpoints := []string{
 		"/api",
@@ -39,29 +42,46 @@ func checkAPIAvailability(ip string) {
 		resp, err := http.Get(url)
 		if err != nil {
 			// If we can't connect to the IP, print an error and move to the next one
-			fmt.Printf("Error connecting to %s%s: %v\n", ip, endpoint, err)
+			resultChannel <- fmt.Sprintf("Error connecting to %s%s: %v", ip, endpoint, err)
 			continue
 		}
 		defer resp.Body.Close()
 
 		// If the response is OK (200), we have found an API endpoint
 		if resp.StatusCode == http.StatusOK {
-			fmt.Printf("API found at %s%s (status: %d)\n", ip, endpoint, resp.StatusCode)
+			resultChannel <- fmt.Sprintf("API found at %s%s (status: %d)", ip, endpoint, resp.StatusCode)
 		} else {
 			// If not 200, print the status code
-			fmt.Printf("No API at %s%s (status: %d)\n", ip, endpoint, resp.StatusCode)
+			resultChannel <- fmt.Sprintf("No API at %s%s (status: %d)", ip, endpoint, resp.StatusCode)
 		}
 	}
 }
 
 func main() {
 	// Define how many IPs to test
-	const numIPs = 10
+	const numIPs = 10000
+
+	// WaitGroup to wait for all goroutines to finish
+	var wg sync.WaitGroup
+
+	// Channel to collect results from goroutines
+	resultChannel := make(chan string, numIPs*10) // Buffer size to handle multiple results
 
 	// Start testing random IPs
 	for i := 0; i < numIPs; i++ {
 		randomIP := generateRandomIP()
-		fmt.Printf("\nTesting IP: %s\n", randomIP)
-		checkAPIAvailability(randomIP)
+		wg.Add(1) // Increment the counter for the WaitGroup
+		go checkAPIAvailability(randomIP, &wg, resultChannel)
+	}
+
+	// Wait for all goroutines to finish
+	go func() {
+		wg.Wait()
+		close(resultChannel) // Close the channel once all goroutines are done
+	}()
+
+	// Print the results
+	for result := range resultChannel {
+		fmt.Println(result)
 	}
 }
